@@ -1,0 +1,64 @@
+version: 2.1
+
+orbs:
+  node: circleci/node@4.1.0
+
+machine:
+  environment:
+    BROWSERSTACK_USERNAME: ${BROWSERSTACK_USERNAME}
+    BROWSERSTACK_ACCESS_KEY: ${BROWSERSTACK_ACCESS_KEY}
+    DEV_API_KEY: ${DEV_API_KEY}
+    PROD_API_KEY: ${PROD_API_KEY}
+    DEV_DELETE_KEY: ${DEV_DELETE_KEY}
+    PROD_DELETE_KEY: ${PROD_DELETE_KEY}
+    UWP1_EMAIL: ${UWP1_EMAIL}
+    UWP1_PASSWORD: ${UWP1_PASSWORD}
+
+test:
+    pre:
+    - wget "https://www.browserstack.com/browserstack-local/BrowserStackLocal-linux-x64.zip"
+    - unzip BrowserStackLocal-linux-x64.zip
+    - ./BrowserStackLocal $BROWSERSTACK_ACCESS_KEY:
+        background: true
+
+executors:
+  go-protobuf-builder:
+    docker:
+      - image: eu.gcr.io/${GCP_PROJECT}/go-protobuf-builder:latest
+        auth:
+          username: _json_key
+          password: ${GCLOUD_SERVICE_KEY}
+
+jobs:
+  build-docker:
+    executor: go-protobuf-builder
+    steps:
+      - checkout
+      - node/install
+      - setup_remote_docker
+
+      - run:
+          name: Docker build
+          command: |
+            docker build --tag eu.gcr.io/${GCP_PROJECT}/${SERVICE}:latest --build-arg BROWSERSTACK_USERNAME --build-arg BROWSERSTACK_ACCESS_KEY --build-arg DEV_API_KEY --build-arg PROD_API_KEY --build-arg DEV_DELETE_KEY --build-arg PROD_DELETE_KEY --build-arg UWP1_EMAIL --build-arg UWP1_PASSWORD .
+
+      - run:
+          name: Authenticate to google
+          command: |
+            echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+            gcloud --quiet config set project ${GCP_PROJECT}
+            gcloud auth configure-docker
+
+      - run:
+          name: Publish to google container registry
+          command: |
+            docker push eu.gcr.io/${GCP_PROJECT}/${SERVICE}:latest
+
+workflows:
+  build_and_test:
+    jobs:
+      - build-docker:
+          filters:
+            branches:
+              only:
+                - master
